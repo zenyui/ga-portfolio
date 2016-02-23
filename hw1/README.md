@@ -1,3 +1,3 @@
-# ga-hw1
+# ga-hw-1
 Author: Zen Yui
 Date: 2016-01-11
