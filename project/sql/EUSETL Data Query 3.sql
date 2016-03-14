@@ -113,6 +113,7 @@ Create table #TicketLines
 	,STR_ID VARCHAR(10)
 	,SKU varchar(20)
 	,Category varchar(20)
+	,Subcategory varchar(20)
 	,QtySold decimal(18,4)
 	,GrossAmount decimal(18,2)
 	,NetAmount decimal(18,2)
@@ -122,6 +123,7 @@ Create table #TicketLines
 )
 
 create unique clustered index ix_pk on #TicketLines (DBKey, BUS_DAT, DOC_ID, PMT_SEQ_NO, LIN_SEQ_NO);
+create index ix_item on #TicketLines(SKU);
 
 insert into #TicketLines 
 (	DBKey
@@ -133,6 +135,7 @@ insert into #TicketLines
 	,STR_ID
 	,SKU
 	,Category
+	,Subcategory
 	,QtySold
 	,GrossAmount
 	,NetAmount
@@ -147,6 +150,7 @@ select	l.DBKey
 		,l.STR_ID
 		,l.ITEM_NO
 		,l.MaxCategory
+		,L.SUBCAT_COD
 		,l.QTY_SOLD * l.QTY_NUMER / l.QTY_DENOM
 		,l.GROSS_EXT_PRC
 		,l.EXT_PRC
@@ -213,6 +217,13 @@ create table #CustPayments
 	,SaleLines			int
 	,ReturnLines		int --may not have enough diversity to be a good feature
 	,GiftCardLines		int --may not have enough diversity to be a good feature
+	,ProduceLines		int	default 0
+	,MeatLines			int	default 0
+	,FishLines			int default 0
+	,OilLines			int	default 0
+	,FreshPastaLines	int	default 0
+	,SAFOLines			int	default 0
+	,RotisserieLines	int	default 0
 	,NetAmount			decimal(18,2)
 	,NetRetailAmount	decimal(18,2)
 	,NetQSRAmount		decimal(18,2)
@@ -221,13 +232,11 @@ create table #CustPayments
 	,UniqueItems		int
 	,UniqueCategories	int
 	,ReturnedBags		bit --returned bags and got bag deposit
-	,BoughtProduce		bit --bought produce during trip
+	--,BoughtProduce		bit --bought produce during trip
+	,TopItemLines		int default 0
 	,WillReturn			bit default 0
-	--,STR_ID				varchar(20) --probably unnecessary
-	--,HasRetailProducts	bit
-	--,HasQSRProducts		bit
-	
 );
+
 
 create unique clustered index ix on #CustPayments (DBKey, BUS_DAT, DOC_ID, PMT_SEQ_NO);
 
@@ -279,6 +288,33 @@ Where P1.VisitCount > 1
 raiserror('repeats found',0,1) with nowait;
 --select top 1000 * from #CustPayments
 
+--agg best selling items of repeat customers
+--drop table #BestSellers
+CREATE TABLE #BestSellers
+(	SKU VARCHAR(20)
+	,TicketCount	int
+	,rn	int
+);
+
+create unique clustered index ix on #BestSellers (SKU);
+
+with x as
+(	select L.SKU, COUNT(DISTINCT CONVERT(VARCHAR(10), L.BUS_DAT) + CONVERT(VARCHAR(20), L.DOC_ID)) as 'TicketCount'
+	from #ticketlines L
+	inner join #custpayments C
+		on L.DBKEY = C.DBKey
+		AND l.BUS_DAT = c.BUS_DAT
+		AND l.DOC_ID = C.DOC_ID
+	WHERE C.WillReturn = 1
+	GROUP BY L.SKU
+)
+insert into #BestSellers (SKU, TicketCount, rn)
+select *, ROW_NUMBER() over (order by TicketCount desc) as 'rn'
+from x
+
+delete #BestSellers where rn > 100;
+--select * from #BestSellers
+
 --drop table #LinesAgg
 create table #LinesAgg
 (	DBKey				int
@@ -295,7 +331,14 @@ create table #LinesAgg
 	,SaleLines			int
 	,ReturnLines		int
 	,ReturnedBags		bit
-	,BoughtProduce		bit
+	,ProduceLines		int	default 0
+	,MeatLines			int	default 0
+	,FishLines			int	default 0
+	,OilLines			int	default 0
+	,FreshPastaLines	int	default 0
+	,SAFOLines			int	default 0
+	,RotisserieLines	int	default 0
+	,TopItemLines		int default 0
 );
 
 create unique clustered index ix_pk on #LinesAgg (DBKey, bus_dat, doc_id, pmt_seq_no);
@@ -315,7 +358,14 @@ insert into #LinesAgg
 	,SaleLines
 	,ReturnLines
 	,ReturnedBags
-	,BoughtProduce
+	,ProduceLines
+	,MeatLines
+	,FishLines
+	,OilLines
+	,FreshPastaLines
+	,SAFOLines
+	,RotisserieLines
+	,TopItemLines
 )
 select	DBKey
 		,BUS_DAT
@@ -324,17 +374,24 @@ select	DBKey
 		,sum(GrossAmount)
 		,sum(NetAmount)
 		,sum(DiscountAmount)
-		,count(distinct SKU)
+		,count(distinct L.SKU)
 		,count(distinct Category)
 		,sum(case when SalesOutletType = 'Retail' then NetAmount else 0 end)
 		,sum(case when SalesOutletType = 'QSR' then NetAmount else 0 end)
 		,sum(case when L.LIN_TYP = 'S' THEN 1 ELSE 0 END)
 		,sum(case when L.LIN_TYP = 'R' THEN 1 ELSE 0 END)
-		,case when sum(case when L.Category = 'BAGREUSE' then 1 else 0 end) > 0 then 1 else 0 end--,ReturnedBags
-		,case when sum(case when L.Category in ('FRUIT','VEGETABLE') then 1 else 0 end) > 0 then 1 else 0 end --boughtProduce
-		--,case when sum(Case when SalesOutletType = 'Retail' then 1 else 0 end) > 0 then 1 else 0 end
-		--,case when sum(Case when SalesOutletType = 'QSR' then 1 else 0 end) > 0 then 1 else 0 end
+		,case when sum(case when L.Category = 'BAGREUSE' then 1 else 0 end) > 0 then 1 else 0 end --,ReturnedBags
+		
+		,sum(case when L.Category in ('FRUIT','VEGETABLE') then 1 else 0 end)  --producelines
+		,sum(case when L.Category = 'MEAT' then 1 else 0 end) --meat lines
+		,sum(case when L.Category = 'FISH' then 1 else 0 end) --FISH LINES
+		,sum(case when L.Category = 'CONDIMENTS' AND L.Subcategory = 'OIL' then 1 else 0 end) --Oil
+		,sum(case when L.Category = 'FRESH PAST' then 1 else 0 end) --Fresh Pasta
+		,sum(case when L.Category in ('SALUMI','CHEESE') then 1 else 0 end)  --SAFO
+		,sum(case when L.Category = 'ROTISSERIE' then 1 else 0 end) --rotisserie
+		,sum(case when B.SKU is not null then 1 else 0 end) --top selling items count
 from #TicketLines L
+left outer join #BestSellers B on L.SKU = B.SKU
 Group by DBKey, BUS_DAT, DOC_ID, PMT_SEQ_NO;
 
 raiserror('lines agg done',0,1) with nowait;
@@ -349,7 +406,14 @@ set NetAmount = L.NetAmount
 	,SaleLines = L.SaleLines
 	,ReturnLines = L.ReturnLines
 	,Returnedbags = L.ReturnedBags
-	,BoughtProduce = L.BoughtProduce
+	,ProduceLines = L.ProduceLines
+	,MeatLines = L.MeatLines
+	,FishLines = L.FishLines
+	,OilLines = L.OilLines
+	,FreshPastaLines = L.FreshPastaLines
+	,SAFOLines = L.SAFOLines
+	,RotisserieLines = L.RotisserieLines
+	,TopItemLines = L.TopItemLines
 from #CustPayments x
 inner join #LinesAgg L
 	on x.DBKey = L.DBKey
