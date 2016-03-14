@@ -232,9 +232,10 @@ create table #CustPayments
 	,UniqueItems		int
 	,UniqueCategories	int
 	,ReturnedBags		bit --returned bags and got bag deposit
-	--,BoughtProduce		bit --bought produce during trip
 	,TopItemLines		int default 0
+	,RepeatProducts		int default 0 -- count of products in current basket that were purchased last visit
 	,WillReturn			bit default 0
+	--,BoughtProduce		bit --bought produce during trip
 );
 
 
@@ -422,6 +423,33 @@ inner join #LinesAgg L
 	and x.PMT_SEQ_NO = l.PMT_SEQ_NO
 
 raiserror('lines agg applied to cust payments done',0,1) with nowait;
+
+--find repeat products from last visit
+with x as (
+	select distinct P.CustomerKey, P.VisitNumber, l.sku
+	from #TicketLines L
+	inner join #CustPayments P
+		on L.DBKey = P.DBKey
+		and L.BUS_DAT = P.BUS_DAt
+		and L.DOC_ID = P.DOC_ID
+	where P.VisitCount > 1
+)
+,rep as
+(	select x1.CustomerKey, x1.VisitNumber, count(*) as 'RepeatProducts'
+	from x x1
+	inner join x x2
+		on x1.CustomerKey = x2.CustomerKey
+		and x1.SKU = x2.SKU
+		and x1.VisitNumber = x2.VisitNumber + 1
+	group by x1.CustomerKey, x1.VisitNumber
+)
+
+update C
+set RepeatProducts = R.RepeatProducts
+from #CustPayments C
+inner join rep R
+	on C.CustomerKey = R.CustomerKey
+	 and C.VisitNumber = R.VisitNumber;
 
 select * from #CustPayments
 
